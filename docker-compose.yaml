@@ -9,4 +9,4 @@ services:
     volumes:
       # HOST_PATH : CONTAINER_PATH
       # Change './media' to the actual path on your physical server
-      - /mnt/ssd1/:/srv/samba/media
+      - /mnt/ssd1/downloads:/srv/samba/media
