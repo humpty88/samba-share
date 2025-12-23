@@ -1,0 +1,12 @@
+version: '3.8'
+
+services:
+  samba-share:
+    build: .
+    container_name: media-share
+    network_mode: "host" 
+    restart: unless-stopped
+    volumes:
+      # HOST_PATH : CONTAINER_PATH
+      # Change './media' to the actual path on your physical server
+      - /mnt/ssd1/:/srv/samba/media
