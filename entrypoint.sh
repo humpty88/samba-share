@@ -1,19 +1,36 @@
-
 #!/bin/bash
 set -e
 
+# --- 1. SET IDENTITY ---
+# Force hostname to UPPERCASE to match NetBIOS standards.
+# This ensures Windows sees "MYSERVER" (NetBIOS) and "MYSERVER" (WSDD)
+# as the same device, preventing ghost icons.
 MYHOST=$(hostname | tr 'a-z' 'A-Z')
-echo "Setting network identity to: $MYHOST"
 
-echo "[INFO] Configuring Samba..."
-cat > /etc/samba/smb.conf <<EOF
+echo "------------------------------------------------"
+echo "Initializing Network Share: $MYHOST"
+echo "------------------------------------------------"
+
+# --- 2. CONFIGURE SAMBA ---
+cat > /etc/samba/smb.conf <<SMB
 [global]
+   # Identity
    workgroup = WORKGROUP
    server string = Samba Docker
    netbios name = $MYHOST
+   
+   # Network Behavior
    server role = standalone server
+   local master = yes 
+   os level = 20
+
+   # Permissions (Guest Access - No Password)
    map to guest = Bad User
    usershare allow guests = yes
+   
+   # Logging
+   log file = /var/log/samba/log.%m
+   max log size = 50
 
 [Media]
    path = /srv/samba/media
@@ -23,14 +40,15 @@ cat > /etc/samba/smb.conf <<EOF
    force user = nobody
    create mask = 0777
    directory mask = 0777
-EOF
+SMB
 
-echo "[INFO] Configuring Avahi (Linux Visibility)..."
-# Disable dbus requirement so it runs in a container
+# --- 3. CONFIGURE AVAHI (Linux/Mac Visibility) ---
+# Disable dbus requirement to allow running inside Docker
 sed -i 's/#enable-dbus=yes/enable-dbus=no/' /etc/avahi/avahi-daemon.conf
-
 mkdir -p /etc/avahi/services
-cat > /etc/avahi/services/samba.service <<EOF
+
+# Create the mDNS service advertisement
+cat > /etc/avahi/services/samba.service <<XML
 <?xml version="1.0" standalone='no'?>
 <!DOCTYPE service-group SYSTEM "avahi-service.dtd">
 <service-group>
@@ -40,19 +58,20 @@ cat > /etc/avahi/services/samba.service <<EOF
    <port>445</port>
  </service>
 </service-group>
-EOF
+XML
 
-echo "[INFO] Starting Services..."
+# --- 4. START SERVICES ---
 
-# 1. Start Avahi in daemon mode
+echo "Starting Avahi (mDNS)..."
 avahi-daemon --daemonize --no-drop-root
 
-# 2. Start WSDD (Windows Visibility) in background
+echo "Starting WSDD (Windows Discovery)..."
+# We explicitly force the hostname here to match the NetBIOS uppercase name
 wsdd --shortlog --hostname "$MYHOST" &
 
-# 3. Start NetBIOS (nmbd) in daemon mode
-nmbd -D
+echo "Starting NetBIOS (nmbd)..."
+service nmbd start
 
-# 4. Start Samba (smbd) in foreground to keep container alive
-echo "[INFO] Samba is ready."
+echo "Starting Samba (smbd)..."
+# Run in foreground to keep the container alive
 smbd -F --no-process-group < /dev/null
