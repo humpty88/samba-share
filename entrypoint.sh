@@ -1,14 +1,27 @@
+cd ~/samba-share
+
+cat << 'EOF' > entrypoint.sh
 #!/bin/bash
 set -e
 
-echo "[INFO] Configuring Samba..."
-cat > /etc/samba/smb.conf <<EOF
+# 1. Get Hostname and convert to UPPERCASE
+# This ensures Windows sees only ONE computer
+MYHOST=$(hostname | tr 'a-z' 'A-Z')
+echo "Setting network identity to: $MYHOST"
+
+# 2. Configure Samba with explicit NetBIOS name
+cat > /etc/samba/smb.conf <<SMB
 [global]
    workgroup = WORKGROUP
    server string = Samba Docker
+   netbios name = $MYHOST
    server role = standalone server
    map to guest = Bad User
    usershare allow guests = yes
+   
+   # Optimization for browsing
+   local master = yes
+   os level = 20
 
 [Media]
    path = /srv/samba/media
@@ -18,14 +31,12 @@ cat > /etc/samba/smb.conf <<EOF
    force user = nobody
    create mask = 0777
    directory mask = 0777
-EOF
+SMB
 
-echo "[INFO] Configuring Avahi (Linux Visibility)..."
-# Disable dbus requirement so it runs in a container
+# 3. Configure Avahi (mDNS)
 sed -i 's/#enable-dbus=yes/enable-dbus=no/' /etc/avahi/avahi-daemon.conf
-
 mkdir -p /etc/avahi/services
-cat > /etc/avahi/services/samba.service <<EOF
+cat > /etc/avahi/services/samba.service <<XML
 <?xml version="1.0" standalone='no'?>
 <!DOCTYPE service-group SYSTEM "avahi-service.dtd">
 <service-group>
@@ -35,19 +46,20 @@ cat > /etc/avahi/services/samba.service <<EOF
    <port>445</port>
  </service>
 </service-group>
-EOF
+XML
 
-echo "[INFO] Starting Services..."
+# 4. Start Services
+echo "Starting services..."
 
-# 1. Start Avahi in daemon mode
+# Start Avahi
 avahi-daemon --daemonize --no-drop-root
 
-# 2. Start WSDD (Windows Visibility) in background
-wsdd --shortlog &
+# Start WSDD (Force the hostname to match NetBIOS)
+wsdd --shortlog --hostname "$MYHOST" &
 
-# 3. Start NetBIOS (nmbd) in daemon mode
+# Start NetBIOS
 nmbd -D
 
-# 4. Start Samba (smbd) in foreground to keep container alive
-echo "[INFO] Samba is ready."
+# Start Samba
 smbd -F --no-process-group < /dev/null
+EOF
